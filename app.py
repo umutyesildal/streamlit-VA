@@ -16,6 +16,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 
+custom_order = ["very_low", "low", "moderate", "high", "very_high"]
+
 
 # -------------------------------------------------------------------
 # 1. LOAD DATA
@@ -48,9 +50,36 @@ def train_random_forest(X_train, y_train):
     rf_model.fit(X_train, y_train.values.ravel())
     return rf_model
 
+# -------------------------------------------------------------------
+# 3. HELPER: FILTER CLASSES GLOBALLY
+# -------------------------------------------------------------------
+def filter_classes(y_test, y_pred, selected_classes):
+    """
+    Returns filtered y_test and y_pred, keeping only rows where y_test 
+    is in selected_classes. Also converts y_pred to a Series with the same index.
+    NOTE: Assumes the target column is named 'x' if y_test is a DataFrame.
+    """
+    # Convert y_test to a Series if it's a DataFrame
+    if isinstance(y_test, pd.DataFrame):
+        # Assuming the single column in your target DataFrame is named 'x'
+        y_test_series = y_test['x']
+    else:
+        y_test_series = y_test
+
+    # Convert y_pred to a Series with same index
+    y_pred_series = pd.Series(y_pred, index=y_test_series.index)
+
+    # Keep only the rows for which y_test is in selected_classes
+    mask = y_test_series.isin(selected_classes)
+    y_test_filtered = y_test_series[mask]
+    y_pred_filtered = y_pred_series[mask]
+
+    return y_test_filtered, y_pred_filtered
+
+
 
 # -------------------------------------------------------------------
-# 3. EVALUATE MODEL
+# 4. EVALUATE MODEL
 # -------------------------------------------------------------------
 def evaluate_model(rf_model, X_test, y_test):
     """
@@ -73,62 +102,68 @@ def evaluate_model(rf_model, X_test, y_test):
 
 
 # -------------------------------------------------------------------
-# 4. PLOTTING UTILITIES
+# 5. PLOTTING UTILITIES
 # -------------------------------------------------------------------
 def show_confusion_matrix(y_test, y_pred, rf_model, title="Confusion Matrix", cmap='Reds', log_scale=False):
     """
     Plots a confusion matrix (and optionally a log-scale version) using matplotlib + seaborn.
+    Only includes classes that appear in y_test (intersection with model classes).
     """
-    cm = confusion_matrix(y_test, y_pred, labels=rf_model.classes_)
-    fig, ax = plt.subplots(figsize=(10, 7))
+    # Determine which classes are present after filtering
+    present_classes = np.intersect1d(rf_model.classes_, y_test.unique())
     
+    # Compute confusion matrix only for present classes
+    cm = confusion_matrix(y_test, y_pred, labels=present_classes)
+    fig, ax = plt.subplots(figsize=(10, 7))
+
     if log_scale:
-        # Apply log scale
         cm_log = np.log1p(cm)
         sns.heatmap(cm_log, annot=cm, fmt='d', cmap=cmap,
-                    xticklabels=rf_model.classes_, yticklabels=rf_model.classes_, ax=ax)
+                    xticklabels=present_classes, yticklabels=present_classes, ax=ax)
         ax.set_title(title + " (Log Scale)")
     else:
         sns.heatmap(cm, annot=True, fmt='d', cmap=cmap,
-                    xticklabels=rf_model.classes_, yticklabels=rf_model.classes_, ax=ax)
+                    xticklabels=present_classes, yticklabels=present_classes, ax=ax)
         ax.set_title(title)
-        
+
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
     st.pyplot(fig)
 
-
 def show_confusion_matrix_normalized(y_test, y_pred, rf_model, title="Normalized Confusion Matrix"):
     """
     Plots a normalized confusion matrix where each row is normalized by its sum.
+    Only includes classes that appear in y_test (intersection with model classes).
     """
-    cm = confusion_matrix(y_test, y_pred, labels=rf_model.classes_)
-    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    
+    present_classes = np.intersect1d(rf_model.classes_, y_test.unique())
+    cm = confusion_matrix(y_test, y_pred, labels=present_classes)
+    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(
         cm_norm, annot=True, fmt='.2f', cmap='Reds',
-        xticklabels=rf_model.classes_, yticklabels=rf_model.classes_, ax=ax
+        xticklabels=present_classes, yticklabels=present_classes, ax=ax
     )
     ax.set_title(title)
     ax.set_xlabel('Predicted Class')
     ax.set_ylabel('True Class')
     st.pyplot(fig)
 
-
 def show_metrics_table(y_test, y_pred, rf_model):
     """
-    Displays a DataFrame with True Positives, False Positives, False Negatives, True Negatives for each class.
+    Displays a DataFrame with True Positives, False Positives, False Negatives, True Negatives 
+    for each class actually present in y_test (intersection with model classes).
     """
-    cm = confusion_matrix(y_test, y_pred, labels=rf_model.classes_)
-    
+    present_classes = np.intersect1d(rf_model.classes_, y_test.unique())
+    cm = confusion_matrix(y_test, y_pred, labels=present_classes)
+
     TP = np.diag(cm)
     FP = cm.sum(axis=0) - TP
     FN = cm.sum(axis=1) - TP
     TN = cm.sum() - (TP + FP + FN)
-    
+
     metrics = pd.DataFrame({
-        'Class': rf_model.classes_,
+        'Class': present_classes,
         'True Positives': TP,
         'False Positives': FP,
         'False Negatives': FN,
@@ -137,6 +172,41 @@ def show_metrics_table(y_test, y_pred, rf_model):
     
     st.subheader("Confusion Matrix Detail")
     st.dataframe(metrics)
+
+def plot_classwise_metrics(y_test, y_pred, rf_model):
+    """
+    Plots a bar chart showing precision, recall, and F1-score for each class 
+    actually present in y_test (excludes overall accuracy, macro avg, and weighted avg rows).
+    """
+    present_classes = np.intersect1d(rf_model.classes_, y_test.unique())
+    fig, ax = plt.subplots(figsize=(6, 5))
+    report = classification_report(
+        y_test, 
+        y_pred, 
+        labels=present_classes, 
+        output_dict=True
+    )
+    metrics_df = pd.DataFrame(report).transpose()
+
+    # Filter out the last three rows (accuracy, macro avg, weighted avg)
+    metrics_df = metrics_df.iloc[:-3, :3]
+
+    # Rename index to "Class" and move it as a column
+    metrics_df.index.name = 'Class'
+    metrics_df.reset_index(inplace=True)
+
+    # Melt the DataFrame for a seaborn bar plot
+    metrics_melted = metrics_df.melt(id_vars='Class', var_name='Metric', value_name='Score')
+
+    # Create the bar plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(x='Class', y='Score', hue='Metric', data=metrics_melted, ax=ax)
+    ax.set_title('Class-wise Precision, Recall, and F1-Score')
+    ax.set_ylabel('Score')
+    ax.set_ylim(0, 1)
+    ax.legend(loc='lower right')
+    st.pyplot(fig)
+
 
 
 def show_true_class_distribution(y_test):
@@ -172,98 +242,60 @@ def plot_classification_report_heatmap(y_test, y_pred):
     plt.tight_layout()
     st.pyplot(fig)
 
-
-def plot_pca_scatter(X_test, y_test, y_pred):
-    """
-    Performs PCA on X_test (2 components), then plots a scatter showing true vs. predicted labels.
-    Misclassified points are marked with 'X'.
-    """
-    pca = PCA(n_components=2)
-    X_test_pca = pca.fit_transform(X_test)
-
-    pca_df = pd.DataFrame({
-        'Component 1': X_test_pca[:, 0],
-        'Component 2': X_test_pca[:, 1],
-        'True Label': y_test.values.ravel(),
-        'Predicted Label': y_pred,
-    })
-    pca_df['Correct'] = pca_df['True Label'] == pca_df['Predicted Label']
-
-    unique_labels = pca_df['True Label'].unique()
-    palette = sns.color_palette("hsv", len(unique_labels))
-    label_color_dict = dict(zip(unique_labels, palette))
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-    for label in unique_labels:
-        subset = pca_df[pca_df['True Label'] == label]
-        ax.scatter(
-            subset['Component 1'],
-            subset['Component 2'],
-            c=[label_color_dict[label]],
-            label=f"Class {label}",
-            marker='o',
-            edgecolors='k',
-            s=100,
-            alpha=0.7
-        )
-
-    # Overlay misclassified points
-    misclassified = pca_df[~pca_df['Correct']]
-    ax.scatter(
-        misclassified['Component 1'],
-        misclassified['Component 2'],
-        c=[label_color_dict[label] for label in misclassified['True Label']],
-        marker='x',
-        s=100,
-        label='Misclassified',
-        alpha=0.9
-    )
-
-    ax.legend()
-    ax.set_title('PCA Scatter Plot of Model Predictions')
-    ax.set_xlabel('Component 1')
-    ax.set_ylabel('Component 2')
-    st.pyplot(fig)
-
-
 def plot_actual_vs_predicted_distributions(y_test, y_pred):
     """
     Plots a side-by-side bar chart comparing the distribution of actual vs. predicted classes.
+    Assumes y_test and y_pred have already been filtered to only include desired classes.
     """
-    # Extract the labels from y_test DataFrame/Series
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # If y_test is a DataFrame, extract its target column (e.g., 'x')
     if isinstance(y_test, pd.DataFrame):
-        # Assuming the column is 'x' based on your code snippet
         y_test_labels = y_test['x']
     else:
-        # If y_test is already a series
         y_test_labels = y_test
 
-    # Convert y_pred to a pandas Series
-    y_pred_series = pd.Series(y_pred, name='Predicted')
+    # Convert y_pred to a pandas Series with the same (filtered) index
+    y_pred_series = pd.Series(y_pred, index=y_test_labels.index)
 
+    # Identify classes actually present (both actual & predicted) after filtering
+    # so that any classes not in the filter are excluded.
+    present_classes = sorted(set(y_test_labels.unique()) & set(y_pred_series.unique()))
+
+    # Compute distribution counts
     true_class_counts = y_test_labels.value_counts().sort_index()
     pred_class_counts = y_pred_series.value_counts().sort_index()
+    
 
+    
+    # Combine into a DataFrame
     class_counts_df = pd.DataFrame({
         'Actual': true_class_counts,
         'Predicted': pred_class_counts
     }).fillna(0)
+    
+    # Keep only those that match your custom order
+    final_order = [c for c in custom_order if c in present_classes]
+    
+    # Reindex with final_order
+    class_counts_df = class_counts_df.reindex(final_order).fillna(0)
 
-    # (Optional) Reorder the classes if you have a known class order
-    class_order = ['very_low', 'low', 'moderate', 'high', 'very_high']
-    # This reindex won't break if any are missing, but you'll see rows with 0 if so
-    class_counts_df = class_counts_df.reindex(class_order).fillna(0)
+    # Reindex only those classes that appear in the union (or intersection, if desired)
+    class_counts_df = class_counts_df.reindex(present_classes).fillna(0)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 5))
     class_counts_df.plot(kind='bar', ax=ax, color=['#1f77b4', '#ff7f0e'])
-    ax.set_title('Comparison of Actual vs Predicted Class Distributions')
+    ax.set_title('Comparison of Actual vs. Predicted Class Distributions')
     ax.set_xlabel('Class')
     ax.set_ylabel('Number of Instances')
     ax.legend(title='Legend')
     plt.xticks(rotation=0)
     plt.tight_layout()
     st.pyplot(fig)
-
 
 def plot_feature_importance(rf_model, X_train, threshold=0.005):
     """
@@ -281,6 +313,7 @@ def plot_feature_importance(rf_model, X_train, threshold=0.005):
     ax.set_title('Filtered Feature Importance (threshold > {:.3f})'.format(threshold))
     plt.xticks(rotation=90)
     st.pyplot(fig)
+    
 
 
 # -------------------------------------------------------------------
@@ -289,17 +322,36 @@ def plot_feature_importance(rf_model, X_train, threshold=0.005):
 def main():
     st.title("Random Forest Classification with Streamlit")
 
+    # --- Setup session state variables ---
+    if "rf_model" not in st.session_state:
+        st.session_state["rf_model"] = None
+    if "y_pred" not in st.session_state:
+        st.session_state["y_pred"] = None
+
     # --- Load Data ---
-    features_path = 'lucas_organic_carbon_training_and_test_data.csv'
-    target_path = 'lucas_organic_carbon_target.csv'
+    features_path = 'data/lucas_organic_carbon_training_and_test_data.csv'
+    target_path = 'data/lucas_organic_carbon_target.csv'
     X_data, y_data = load_data(features_path, target_path)
 
     st.write("### Data Shapes")
     st.write("Features shape:", X_data.shape)
     st.write("Target shape:", y_data.shape)
 
+    # --- Sidebar for Class Filter (Global) ---
+    all_classes = sorted(y_data['x'].unique())
+    st.sidebar.write("## Class Filter")
+
+    # Intersect with whatever classes exist in y_data
+    final_options = [c for c in custom_order if c in all_classes]
+
+    selected_classes = st.sidebar.multiselect(
+        "Select which classes to include in all plots:",
+        options=final_options,  # in your custom order
+        default=final_options
+    )
+
     # --- Train/Test Split ---
-    test_size = st.slider("Test Size (fraction)", 0.05, 0.95, 0.3, 0.05)
+    test_size = st.sidebar.slider("Test Size (fraction)", 0.05, 0.95, 0.3, 0.05)
     X_train, X_test, y_train, y_test = train_test_split(
         X_data, 
         y_data, 
@@ -309,44 +361,95 @@ def main():
 
     st.write(f"**Train size**: {len(X_train)}, **Test size**: {len(X_test)}")
 
-    # --- Train Model ---
+    # ----------------------------------------------------------------
+    # Button: Train the model and auto-run all plots once
+    # ----------------------------------------------------------------
     if st.button("Train Random Forest"):
         rf_model = train_random_forest(X_train, y_train)
-        st.success("Model training complete!")
-        
-        # --- Evaluate Model ---
-        y_pred = evaluate_model(rf_model, X_test, y_test)
+        st.session_state["rf_model"] = rf_model
+        st.session_state["y_pred"] = rf_model.predict(X_test)
+        st.success("Model training complete. Automatically generating all plots...")
 
-        # --- Show Confusion Matrix (Regular) ---
-        show_confusion_matrix(y_test, y_pred, rf_model, title="Confusion Matrix (Regular)", cmap='Reds')
+        # Evaluate Model (on full test set)
+        evaluate_model(rf_model, X_test, y_test)
+
+        # Filter for selected classes
+        y_test_filtered, y_pred_filtered = filter_classes(y_test, st.session_state["y_pred"], selected_classes)
+
+        # Show Confusion Matrix
+        show_confusion_matrix(y_test_filtered, y_pred_filtered, rf_model, 
+                             title="Confusion Matrix (Regular)", cmap='Reds')
         
-        # --- Show Confusion Matrix (Log Scale) ---
-        show_confusion_matrix(y_test, y_pred, rf_model, title="Confusion Matrix", cmap='Blues', log_scale=True)
+        # Show Normalized Confusion Matrix
+        show_confusion_matrix_normalized(y_test_filtered, y_pred_filtered, rf_model, 
+                                         title="Normalized Confusion Matrix")
         
-        # --- Confusion Matrix Detail (TP, FP, FN, TN) ---
-        show_metrics_table(y_test, y_pred, rf_model)
-        
-        # --- Show True Class Distribution ---
-        show_true_class_distribution(y_test)
-        
-        # --- Show Normalized Confusion Matrix ---
-        show_confusion_matrix_normalized(y_test, y_pred, rf_model, 
-                                         title="Normalized Confusion Matrix Highlighting Misclassifications")
-        
-        # --- PCA Scatter Plot ---
-        plot_pca_scatter(X_test, y_test, y_pred)
-        
-        # --- Classification Report Heatmap ---
-        plot_classification_report_heatmap(y_test, y_pred)
-        
-        # --- Compare Actual vs. Predicted Distribution ---
-        plot_actual_vs_predicted_distributions(y_test, y_pred)
-        
-        # --- Feature Importances ---
+        # Confusion Matrix Detail
+        show_metrics_table(y_test_filtered, y_pred_filtered, rf_model)
+
+        # Side-by-side columns for Classwise Metrics and Actual vs Predicted
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Classwise Metrics")
+            plot_classwise_metrics(y_test_filtered, y_pred_filtered, rf_model)
+        with col2:
+            st.subheader("Actual vs. Predicted Distribution")
+            plot_actual_vs_predicted_distributions(y_test_filtered, y_pred_filtered)
+
+        # Feature Importance
         plot_feature_importance(rf_model, X_train, threshold=0.005)
+
+    # ----------------------------------------------------------------
+    # If the model is trained, present individual buttons for each plot
+    # ----------------------------------------------------------------
+    if st.session_state["rf_model"] is not None:
+        rf_model = st.session_state["rf_model"]
+        y_pred = st.session_state["y_pred"]  # predictions on the full test set
+
+        # Filter y_test, y_pred based on selected classes
+        y_test_filtered, y_pred_filtered = filter_classes(y_test, y_pred, selected_classes)
+
+        st.write("---")
+        st.write("## Individual Actions")
+
+        # Evaluate Model Button
+        if st.button("Evaluate Model"):
+            evaluate_model(rf_model, X_test, y_test)
+
+        # Show Confusion Matrix Button
+        if st.button("Show Confusion Matrix"):
+            show_confusion_matrix(y_test_filtered, y_pred_filtered, rf_model, 
+                                 title="Confusion Matrix (Regular)", cmap='Reds')
+
+        # Normalized Confusion Matrix
+        if st.button("Show Normalized Confusion Matrix"):
+            show_confusion_matrix_normalized(y_test_filtered, y_pred_filtered, rf_model, 
+                                             title="Normalized Confusion Matrix")
+
+        # Confusion Matrix Detail
+        if st.button("Show Confusion Matrix Detail"):
+            show_metrics_table(y_test_filtered, y_pred_filtered, rf_model)
+
+        # Side-by-side: Classwise Metrics & Actual vs. Predicted Distribution
+        show_both = st.button("Show Classwise + Actual vs Predicted")
+        if show_both:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Classwise Metrics")
+                plot_classwise_metrics(y_test_filtered, y_pred_filtered, rf_model)
+            with col2:
+                st.subheader("Actual vs. Predicted Distribution")
+                plot_actual_vs_predicted_distributions(y_test_filtered, y_pred_filtered)
+
+        # Feature Importance
+        if st.button("Show Feature Importance"):
+            plot_feature_importance(rf_model, X_train, threshold=0.005)
+
     else:
-        st.info("Click 'Train Random Forest' to run the model and see all outputs.")
+        st.info("Please train the Random Forest model first.")
+
 
 
 if __name__ == "__main__":
+    st.set_page_config(layout="wide")
     main()
