@@ -314,6 +314,179 @@ def plot_feature_importance(rf_model, X_train, threshold=0.005):
     plt.xticks(rotation=90)
     st.pyplot(fig)
     
+def calculate_interval_impact(feature, intervals, model, X, y):
+    """
+    Calculates how replacing feature values within each interval by the 
+    midpoint of that interval affects model accuracy.
+
+    :param feature: The name of the feature (string) to analyze.
+    :param intervals: A list of (start, end) tuples that define intervals for the feature.
+    :param model: A trained model (e.g., RandomForestClassifier).
+    :param X: The feature DataFrame (test set).
+    :param y: The true labels (test set).
+    :return: A list of accuracy scores, one for each interval replacement.
+    """
+
+    impacts = []
+    for start, end in intervals:
+        X_modified = X.copy()
+        if feature in X_modified.columns:
+            midpoint = (start + end) / 2
+            X_modified[feature] = X_modified[feature].apply(
+                lambda x: midpoint if (start <= x <= end) else x
+            )
+            y_pred_modified = model.predict(X_modified)
+            impact = accuracy_score(y, y_pred_modified)
+            impacts.append(impact)
+        else:
+            print(f"Feature '{feature}' not found in the dataset.")
+            return []
+    return impacts
+
+def show_interval_impact(rf_model, X_test, y_test, feature_importances, bins=10):
+    """
+    Identifies the most important feature, creates intervals with qcut,
+    calls calculate_interval_impact, and then plots the impact of each interval on accuracy.
+
+    :param rf_model: Trained RandomForestClassifier or similar model
+    :param X_test: Pandas DataFrame (test features)
+    :param y_test: Pandas Series or array-like (test labels)
+    :param feature_importances: Numpy array of feature importances
+    :param bins: Number of bins for qcut (default: 10)
+    """
+
+    # 1. Pick the top feature
+    top_feature_idx = np.argmax(feature_importances)
+    feature = X_test.columns[top_feature_idx]
+
+    # 2. Create intervals with qcut
+    intervals_series = pd.qcut(X_test[feature], q=bins, duplicates='drop')
+    intervals = [(interval.left, interval.right) for interval in intervals_series.unique()]
+
+    # 3. Calculate interval impact
+    impacts = calculate_interval_impact(feature, intervals, rf_model, X_test, y_test)
+
+    # 4. Plot
+    fig, ax = plt.subplots(figsize=(10, 7))
+    x_labels = [f"{start:.5f}-{end:.5f}" for start, end in intervals]
+    ax.plot(x_labels, impacts, marker='o')
+    ax.set_xticklabels(x_labels, rotation=45, fontsize=10)
+    ax.set_xlabel("Intervals")
+    ax.set_ylabel("Impact on Accuracy")
+    ax.set_title(f"Impact of Intervals on '{feature}'")
+
+    st.pyplot(fig)
+
+
+
+def plot_2d_heatmap(feature1, feature2, model, X, y, bins=10):
+    """
+    Creates a 2D heatmap of model accuracy when feature1 and feature2 are replaced 
+    by the midpoint of each bin in a grid.
+
+    :param feature1: The name of the first feature.
+    :param feature2: The name of the second feature.
+    :param model: A trained model (RandomForestClassifier or similar).
+    :param X: The feature DataFrame (test set).
+    :param y: The true labels (test set).
+    :param bins: Number of bins along each feature axis.
+    :return: A matplotlib figure containing the heatmap.
+    """
+
+    if feature1 not in X.columns or feature2 not in X.columns:
+        print(f"One or both features '{feature1}' and '{feature2}' not found in the dataset.")
+        return None
+
+    min_feature1 = X[feature1].min()
+    max_feature1 = X[feature1].max()
+    min_feature2 = X[feature2].min()
+    max_feature2 = X[feature2].max()
+
+    x_edges = np.linspace(min_feature1, max_feature1, bins + 1)
+    y_edges = np.linspace(min_feature2, max_feature2, bins + 1)
+
+    heatmap = np.zeros((bins, bins))
+
+    for i in range(bins):
+        for j in range(bins):
+            X_modified = X.copy()
+
+            # Replace feature1 with midpoint in bin i
+            midpoint_x = (x_edges[i] + x_edges[i + 1]) / 2
+            X_modified[feature1] = X_modified[feature1].apply(
+                lambda v: midpoint_x if x_edges[i] <= v <= x_edges[i+1] else v
+            )
+
+            # Replace feature2 with midpoint in bin j
+            midpoint_y = (y_edges[j] + y_edges[j + 1]) / 2
+            X_modified[feature2] = X_modified[feature2].apply(
+                lambda v: midpoint_y if y_edges[j] <= v <= y_edges[j+1] else v
+            )
+
+            y_pred_modified = model.predict(X_modified)
+            heatmap[i, j] = accuracy_score(y, y_pred_modified)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    sns.heatmap(
+        heatmap, cmap='coolwarm',
+        xticklabels=np.round(x_edges, 2),
+        yticklabels=np.round(y_edges, 2),
+        cbar_kws={'label': 'Accuracy'},
+        ax=ax
+    )
+    ax.set_xlabel(feature1)
+    ax.set_ylabel(feature2)
+    ax.set_title('2D Heatmap of Feature Interactions')
+    return fig
+
+def show_2d_heatmap(rf_model, X_test, y_test, feature_importances, bins=10):
+    """
+    Identifies the top two most important features, calls plot_2d_heatmap,
+    and displays the resulting figure in Streamlit.
+
+    :param rf_model: Trained RandomForestClassifier or similar model
+    :param X_test: Pandas DataFrame (test features)
+    :param y_test: Pandas Series or array-like (test labels)
+    :param feature_importances: Numpy array of feature importances
+    :param bins: Number of bins along each feature axis (default: 10)
+    """
+
+    # Find the top two features
+    top_feature1_idx = np.argmax(feature_importances)
+    feature1 = X_test.columns[top_feature1_idx]
+
+    # Second best: the next highest importance
+    sorted_indices = np.argsort(feature_importances)
+    feature2 = X_test.columns[sorted_indices[-2]]  # second-highest importance
+
+    fig = plot_2d_heatmap(feature1, feature2, rf_model, X_test, y_test, bins=bins)
+    if fig is not None:
+        st.pyplot(fig)
+
+def get_single_feature_importance(rf_model, X_data, feature_name):
+    """
+    Returns the feature importance score for a single feature from a trained RandomForest model.
+    
+    Args:
+        rf_model: A trained RandomForestClassifier (or similar model with feature_importances_).
+        X_data (pd.DataFrame): The DataFrame containing the features used to train rf_model.
+        feature_name (str): The name of the feature whose importance to retrieve.
+    
+    Returns:
+        float: The importance score for the specified feature.
+    
+    Raises:
+        ValueError: If the feature_name is not a column in X_data.
+    """
+    if feature_name not in X_data.columns:
+        raise ValueError(f"Feature '{feature_name}' not found in the dataset.")
+    
+    feature_index = list(X_data.columns).index(feature_name)
+    return rf_model.feature_importances_[feature_index]
+
+
+
+    
 
 
 # -------------------------------------------------------------------
@@ -366,6 +539,7 @@ def main():
     # ----------------------------------------------------------------
     if st.button("Train Random Forest"):
         rf_model = train_random_forest(X_train, y_train)
+        feature_importances = rf_model.feature_importances_
         st.session_state["rf_model"] = rf_model
         st.session_state["y_pred"] = rf_model.predict(X_test)
         st.success("Model training complete. Automatically generating all plots...")
@@ -398,6 +572,15 @@ def main():
 
         # Feature Importance
         plot_feature_importance(rf_model, X_train, threshold=0.005)
+        
+        
+        # Interval Impact
+        show_interval_impact(rf_model, X_test, y_test, feature_importances, bins=10)
+        
+        # 2D Heatmap
+        show_2d_heatmap(rf_model, X_test, y_test, feature_importances, bins=10)
+
+
 
     # ----------------------------------------------------------------
     # If the model is trained, present individual buttons for each plot
@@ -444,6 +627,46 @@ def main():
         # Feature Importance
         if st.button("Show Feature Importance"):
             plot_feature_importance(rf_model, X_train, threshold=0.005)
+            
+        feature_importances = rf_model.feature_importances_
+        # Button for Interval Impact
+        if st.button("Show Interval Impact"):
+            show_interval_impact(rf_model, X_test, y_test, feature_importances, bins=10)
+
+
+        # Button for 2D Heatmap
+        if st.button("Show 2D Heatmap"):
+            show_2d_heatmap(rf_model, X_test, y_test, feature_importances, bins=10)
+            
+        # Single Feature Importance Lookup
+        st.subheader("Single Feature Importance Lookup")
+
+        # This text input allows multiple features, separated by commas
+        user_input = st.text_input(
+            "Enter feature name(s) (comma-separated)",
+            value=""
+        )
+
+        # Button to trigger the lookup
+        if st.button("Get Single Feature Importance"):
+            # Check if user typed anything
+            if not user_input.strip():
+                st.warning("Please enter at least one feature name.")
+            else:
+                # Split by comma, strip whitespace
+                requested_features = [feat.strip() for feat in user_input.split(",")]
+
+                # Loop through each requested feature and try to display its importance
+                for feat in requested_features:
+                    if feat in X_train.columns:
+                        # Find importance by index
+                        feature_index = X_train.columns.get_loc(feat)
+                        importance_score = rf_model.feature_importances_[feature_index]
+                        st.write(f"**{feat}**: {importance_score:.5f}")
+                    else:
+                        st.error(f"Feature '{feat}' not found in the dataset.")
+
+
 
     else:
         st.info("Please train the Random Forest model first.")
