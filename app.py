@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
+from sklearn.utils import shuffle
 
 # Sklearn imports
 from sklearn.ensemble import RandomForestClassifier
@@ -15,6 +16,8 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
+
+
 
 custom_order = ["very_low", "low", "moderate", "high", "very_high"]
 
@@ -247,10 +250,6 @@ def plot_actual_vs_predicted_distributions(y_test, y_pred):
     Plots a side-by-side bar chart comparing the distribution of actual vs. predicted classes.
     Assumes y_test and y_pred have already been filtered to only include desired classes.
     """
-    import streamlit as st
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
 
     # If y_test is a DataFrame, extract its target column (e.g., 'x')
     if isinstance(y_test, pd.DataFrame):
@@ -378,6 +377,13 @@ def show_interval_impact(rf_model, X_test, y_test, feature_importances, bins=10)
     st.pyplot(fig)
 
 
+# === Substitution Function ===
+def substitute_and_calculate_accuracy(feature, replacement_value, model, X, y):
+    X_modified = X.copy()
+    X_modified[feature] = replacement_value
+    y_pred_modified = model.predict(X_modified)
+    return accuracy_score(y, y_pred_modified)
+
 
 def plot_2d_heatmap(feature1, feature2, model, X, y, bins=10):
     """
@@ -486,6 +492,178 @@ def get_single_feature_importance(rf_model, X_data, feature_name):
 
 
 
+def show_substitution_analysis(rf_model, X_test, y_test, feature_name):
+    """
+    Performs substitution analysis on the given feature and plots accuracy for min, mean, and max values.
+
+    Args:
+        rf_model: Trained RandomForestClassifier model.
+        X_test: DataFrame of test features.
+        y_test: Series or array of test labels.
+        feature_name: Name of the feature to analyze.
+    """
+    if feature_name not in X_test.columns:
+        st.error(f"Feature '{feature_name}' not found in the dataset.")
+        return
+
+    # Calculate min, mean, max values
+    min_value = X_test[feature_name].min()
+    mean_value = X_test[feature_name].mean()
+    max_value = X_test[feature_name].max()
+
+    st.write(f"**Substitution Analysis for '{feature_name}'**")
+    st.write(f"Min: {min_value:.4f}, Mean: {mean_value:.4f}, Max: {max_value:.4f}")
+
+    # Replacement values and corresponding accuracies
+    replacement_values = [min_value, mean_value, max_value]
+    accuracies = [
+        substitute_and_calculate_accuracy(feature_name, value, rf_model, X_test, y_test)
+        for value in replacement_values
+    ]
+
+    # Plot the results
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(["Min", "Mean", "Max"], accuracies, marker="o", color="b", label="Accuracy")
+    ax.set_title(f"Substitution Analysis for '{feature_name}'")
+    ax.set_xlabel("Replacement Values")
+    ax.set_ylabel("Accuracy")
+    ax.grid()
+    st.pyplot(fig)
+
+
+
+def show_permutation_importance(rf_model, X_test, y_test, feature_name, n_iter=10):
+    """
+    Calculates and displays permutation importance for the specified feature.
+
+    Args:
+        rf_model: Trained RandomForestClassifier model.
+        X_test: DataFrame of test features.
+        y_test: Series or array of test labels.
+        feature_name: Name of the feature to analyze.
+        n_iter: Number of permutation iterations (default: 10).
+    """
+    if feature_name not in X_test.columns:
+        st.error(f"Feature '{feature_name}' not found in the dataset.")
+        return
+
+    baseline_accuracy = accuracy_score(y_test, rf_model.predict(X_test))
+    accuracy_drop = []
+
+    for _ in range(n_iter):
+        X_permuted = X_test.copy()
+        X_permuted[feature_name] = shuffle(X_permuted[feature_name].values)
+        permuted_accuracy = accuracy_score(y_test, rf_model.predict(X_permuted))
+        accuracy_drop.append(baseline_accuracy - permuted_accuracy)
+
+    perm_importance_score = np.mean(accuracy_drop)
+
+    st.write(f"**Permutation Importance for '{feature_name}': {perm_importance_score:.5f}**")
+
+
+def show_interval_permutation_importance(rf_model, X_test, y_test, feature_name, num_intervals=20):
+    """
+    Displays interval-based feature importance using permutation within intervals.
+
+    Args:
+        rf_model: Trained RandomForestClassifier model.
+        X_test: DataFrame of test features.
+        y_test: Series or array of test labels.
+        feature_name: Name of the feature to analyze.
+        num_intervals: Number of intervals to partition the feature (default: 20).
+    """
+    if feature_name not in X_test.columns:
+        st.error(f"Feature '{feature_name}' not found in the dataset.")
+        return
+
+    intervals = pd.qcut(X_test[feature_name], q=num_intervals, duplicates="drop")
+    interval_labels = []
+    importance_scores = []
+
+    baseline_accuracy = accuracy_score(y_test, rf_model.predict(X_test))
+
+    for interval in intervals.unique():
+        X_modified_p1 = X_test.copy()
+        X_modified_p2 = X_test.copy()
+        mid_left = interval.left
+        mid_right = interval.right
+
+        X_modified_p1[feature_name] = mid_left
+        X_modified_p2[feature_name] = mid_right
+
+        accuracy_p1 = accuracy_score(y_test, rf_model.predict(X_modified_p1))
+        accuracy_p2 = accuracy_score(y_test, rf_model.predict(X_modified_p2))
+
+        avg_importance = (baseline_accuracy - accuracy_p1 + baseline_accuracy - accuracy_p2) / 2
+        importance_scores.append(avg_importance)
+        interval_labels.append(f"{mid_left:.2e} - {mid_right:.2e}")
+
+    # Plot interval feature importance scores
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(interval_labels, importance_scores, color="orange")
+    ax.set_xlabel("Interval Range")
+    ax.set_ylabel("Feature Importance (Permutation)")
+    ax.set_title(f"Interval-Based Feature Importance for '{feature_name}'")
+    ax.tick_params(axis="x", rotation=45)
+    st.pyplot(fig)
+
+
+
+def show_2d_heatmap_interaction(rf_model, X_test, y_test, feature1, feature2, bins=10):
+    """
+    Displays a 2D heatmap of feature interactions using model accuracy.
+
+    Args:
+        rf_model: Trained RandomForestClassifier model.
+        X_test: DataFrame of test features.
+        y_test: Series or array of test labels.
+        feature1: First feature name.
+        feature2: Second feature name.
+        bins: Number of bins for heatmap calculation (default: 10).
+    """
+    if feature1 not in X_test.columns or feature2 not in X_test.columns:
+        st.error(f"One or both features '{feature1}' and '{feature2}' not found.")
+        return
+
+    min1, max1 = X_test[feature1].min(), X_test[feature1].max()
+    min2, max2 = X_test[feature2].min(), X_test[feature2].max()
+
+    x_edges = np.linspace(min1, max1, bins + 1)
+    y_edges = np.linspace(min2, max2, bins + 1)
+
+    heatmap = np.zeros((bins, bins))
+
+    for i in range(bins):
+        for j in range(bins):
+            X_copy = X_test.copy()
+            midpoint_x = (x_edges[i] + x_edges[i + 1]) / 2
+            midpoint_y = (y_edges[j] + y_edges[j + 1]) / 2
+
+            X_copy[feature1] = X_copy[feature1].apply(
+                lambda v: midpoint_x if x_edges[i] <= v <= x_edges[i + 1] else v
+            )
+            X_copy[feature2] = X_copy[feature2].apply(
+                lambda v: midpoint_y if y_edges[j] <= v <= y_edges[j + 1] else v
+            )
+
+            y_pred = rf_model.predict(X_copy)
+            heatmap[i, j] = accuracy_score(y_test, y_pred)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    sns.heatmap(
+        heatmap,
+        cmap="coolwarm",
+        xticklabels=np.round(x_edges, 2),
+        yticklabels=np.round(y_edges, 2),
+        cbar_kws={"label": "Accuracy"},
+        ax=ax,
+    )
+    ax.set_xlabel(feature1)
+    ax.set_ylabel(feature2)
+    ax.set_title("2D Feature Interaction Heatmap")
+    st.pyplot(fig)
+
+
     
 
 
@@ -502,7 +680,7 @@ def main():
         st.session_state["y_pred"] = None
 
     # --- Load Data ---
-    features_path = 'data/lucas_organic_carbon_training_and_test_data.csv'
+    features_path = 'data/lucas_organic_carbon_training_and_test_data_corrupted.csv'
     target_path = 'data/lucas_organic_carbon_target.csv'
     X_data, y_data = load_data(features_path, target_path)
 
@@ -573,14 +751,16 @@ def main():
         # Feature Importance
         plot_feature_importance(rf_model, X_train, threshold=0.005)
         
-        
         # Interval Impact
         show_interval_impact(rf_model, X_test, y_test, feature_importances, bins=10)
         
         # 2D Heatmap
         show_2d_heatmap(rf_model, X_test, y_test, feature_importances, bins=10)
-
-
+        chosen_feature = "2257" 
+        show_substitution_analysis(rf_model, X_test, y_test, feature_name="2257")
+        show_permutation_importance(rf_model, X_test, y_test, feature_name="2257")
+        show_interval_permutation_importance(rf_model, X_test, y_test, feature_name="2257")
+        show_2d_heatmap_interaction(rf_model, X_test, y_test, feature1="2257", feature2="2252")
 
     # ----------------------------------------------------------------
     # If the model is trained, present individual buttons for each plot
@@ -666,12 +846,23 @@ def main():
                     else:
                         st.error(f"Feature '{feat}' not found in the dataset.")
 
+        if st.button("Substitution Analysis"):
+            chosen_feature = "2257.0"  # or from user input
+            show_substitution_analysis(chosen_feature, rf_model, X_test, y_test)
 
+        if st.button("2D Feature Interaction Heatmap"):
+            show_2d_heatmap_interaction("2257.0", "2252.0", rf_model, X_test, y_test, bins=10)
+            
+        if st.button("Interval Permutation Importance"):
+            chosen_feature = "2257.0"
+            show_interval_permutation_importance(chosen_feature, rf_model, X_test, y_test, num_intervals=20)
+
+        if st.button("Permutation Importance"):
+            chosen_feature = "2257.0" 
+            show_permutation_importance(chosen_feature, rf_model, X_test, y_test, n_iter=10)
 
     else:
         st.info("Please train the Random Forest model first.")
-
-
 
 if __name__ == "__main__":
     st.set_page_config(layout="wide")
