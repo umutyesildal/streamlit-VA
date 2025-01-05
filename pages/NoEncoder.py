@@ -1,17 +1,14 @@
-import numpy as np
-from sklearn.calibration import LabelEncoder
-from sklearn.ensemble import RandomForestClassifier
 import streamlit as st
 from sklearn.model_selection import train_test_split
-from data_loader import load_data
-from model import train_random_forest, evaluate_model
-from plotting import (
+from services.model import train_random_forest, evaluate_model
+from services.data_loader import load_data
+from services.utils import filter_classes , substitute_and_calculate_accuracy , calculate_interval_impact ,get_single_feature_importance
+from services.plotting import (
     show_confusion_matrix, show_confusion_matrix_normalized, show_metrics_table,
     plot_classwise_metrics,
     plot_actual_vs_predicted_distributions, plot_feature_importance, show_interval_impact,
      show_substitution_analysis, show_permutation_importance, show_interval_permutation_importance, plot_2d_heatmap
 )
-from utils import filter_classes, get_single_feature_importance
 
 custom_order = ["very_low", "low", "moderate", "high", "very_high"]
 
@@ -102,18 +99,6 @@ def main():
         with col8:
             st.subheader("2D Heatmap")
             plot_2d_heatmap(rf_model, X_test, y_test, feature1="2257.0", feature2="2252.0", bins=10)
-
-        st.subheader("Substitution Analysis")
-        show_substitution_analysis(rf_model, X_test, y_test, feature_name="2257.0")
-        
-        
-        col11, col12 = st.columns(2)
-        with col11:
-            st.subheader("Interval Permutation Importance")
-            show_interval_permutation_importance("2257.0", rf_model, X_test, y_test)
-        with col12:
-            st.subheader("2D Heatmap Interaction " )
-            plot_2d_heatmap(rf_model, X_test, y_test, feature1="2257.0", feature2="2252.0")
         
     # ----------------------------------------------------------------
     # If the model is trained, present individual buttons for each plot

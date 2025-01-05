@@ -5,8 +5,7 @@ import pandas as pd
 from sklearn.utils import shuffle
 import streamlit as st
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
-
-from utils import calculate_interval_impact, substitute_and_calculate_accuracy
+from services.utils import calculate_interval_impact, substitute_and_calculate_accuracy
 
 def show_confusion_matrix(y_test, y_pred, rf_model, title="Confusion Matrix", cmap='Reds', log_scale=False):
     """
