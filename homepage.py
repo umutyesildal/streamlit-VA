@@ -26,7 +26,6 @@ def main():
                 with st.spinner("Training model..."):
                     train_and_store_model(X_data, y_data)
                 st.success("✅ Training Complete!")
-                st.rerun()
     
     # Show shared sidebar content
     if is_model_trained():
