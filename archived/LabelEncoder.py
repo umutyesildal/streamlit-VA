@@ -107,46 +107,51 @@ def main():
     rf_model.fit(X_train, y_train)
     st.success("Random Forest Model Trained Successfully!")
 
-    # Feature Importances
-    st.header("Feature Importances")
-    feature_importances = pd.Series(rf_model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
-    fig, ax = plt.subplots(figsize=(16, 6))
-    feature_importances.head(20).plot(kind='bar', ax=ax)
-    ax.set_title('Top 20 Features')
-    ax.set_xlabel('Features')
-    ax.set_ylabel('Importance Score')
-    st.pyplot(fig)
 
-    # Substitution Analysis
-    st.header("Substitution Analysis")
-    selected_feature = "2257.0"
-    if selected_feature in X_test.columns:
-        min_value, mean_value, max_value = X_test[selected_feature].min(), X_test[selected_feature].mean(), X_test[selected_feature].max()
-        replacement_values = [min_value, mean_value, max_value]
-        accuracies = [substitute_and_calculate_accuracy(selected_feature, v, rf_model, X_test, y_test) for v in replacement_values]
-
-        st.write(f"Selected Feature: {selected_feature}")
-        st.write(f"Min: {min_value}, Mean: {mean_value}, Max: {max_value}")
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(["Min", "Mean", "Max"], accuracies, marker='o')
-        ax.set_title(f"Substitution Analysis for {selected_feature}")
-        ax.set_ylabel("Accuracy Score")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        # Feature Importances
+        st.header("Feature Importances")
+        feature_importances = pd.Series(rf_model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
+        fig, ax = plt.subplots(figsize=(16, 6))
+        feature_importances.head(20).plot(kind='bar', ax=ax)
+        ax.set_title('Top 20 Features')
+        ax.set_xlabel('Features')
+        ax.set_ylabel('Importance Score')
         st.pyplot(fig)
+    with col2:
+        # Substitution Analysis
+        st.header("Substitution Analysis")
+        selected_feature = "2257.0"
+        if selected_feature in X_test.columns:
+            min_value, mean_value, max_value = X_test[selected_feature].min(), X_test[selected_feature].mean(), X_test[selected_feature].max()
+            replacement_values = [min_value, mean_value, max_value]
+            accuracies = [substitute_and_calculate_accuracy(selected_feature, v, rf_model, X_test, y_test) for v in replacement_values]
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(["Min", "Mean", "Max"], accuracies, marker='o')
+            ax.set_title(f"Substitution Analysis for {selected_feature}")
+            ax.set_ylabel("Accuracy Score")
+            st.pyplot(fig)
+            
+    col3, col4 = st.columns(2)
+    with col3:
+        # Interval Analysis
+        st.header("Interval-Based Feature Importance")
+        interval_permutation_importance(selected_feature, rf_model, X_test, y_test, num_intervals=20)
+    with col4:
+        # 2D Heatmap
+        st.header("2D Heatmap")
+        feature1, feature2 = "2257.0", "2252.0"
+        if feature1 in X_test.columns and feature2 in X_test.columns:
+            plot_2d_heatmap(feature1, feature2, rf_model, X_test, y_test)
+
 
     # Permutation Importance
     st.header("Permutation Importance")
     perm_importance_score = permutation_importance(selected_feature, rf_model, X_test, y_test)
     st.write(f"Permutation importance score for {selected_feature}: {perm_importance_score:.4f}")
 
-    # Interval Analysis
-    st.header("Interval-Based Feature Importance")
-    interval_permutation_importance(selected_feature, rf_model, X_test, y_test, num_intervals=20)
-
-    # 2D Heatmap
-    st.header("2D Heatmap")
-    feature1, feature2 = "2257.0", "2252.0"
-    if feature1 in X_test.columns and feature2 in X_test.columns:
-        plot_2d_heatmap(feature1, feature2, rf_model, X_test, y_test)
 
     # Confusion Matrix
     st.header("Confusion Matrix")
