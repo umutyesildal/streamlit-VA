@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 import plotly.figure_factory as ff
 import plotly.express as px
@@ -9,6 +10,10 @@ from services.data_loader import load_data
 from components.shared_sidebar import show_shared_sidebar
 
 def create_interactive_confusion_matrix(y_true, y_pred, model, normalized=False, title="Confusion Matrix"):
+    # Convert y_true to numpy array if it's a DataFrame
+    if isinstance(y_true, pd.DataFrame):
+        y_true = y_true.values.ravel()
+    
     labels = model.classes_
     cm = confusion_matrix(y_true, y_pred, labels=labels)
     
@@ -21,20 +26,26 @@ def create_interactive_confusion_matrix(y_true, y_pred, model, normalized=False,
         text_format = 'd'
         color_label = "Count"
 
-    # Create the heatmap with improved colors
+    # Calculate color scale range based on data
+    max_val = cm.max()
+    min_val = cm.min()
+    
+    # Create the heatmap with adjusted color scale
     fig = px.imshow(
         cm,
         x=labels,
         y=labels,
         color_continuous_scale=[
-            [0, '#f7fcfd'],      # Very light blue-green
-            [0.3, '#e0ecf4'],    # Light blue
-            [0.5, '#bfd3e6'],    # Medium blue
-            [0.7, '#8c96c6'],    # Dark blue-purple
-            [0.9, '#88419d'],    # Purple
-            [1, '#4d004b']       # Deep purple
+            [0, '#ffffff'],       # White for zero
+            [0.2, '#edf8fb'],     # Very light blue
+            [0.4, '#b2e2e2'],     # Light blue-green
+            [0.6, '#66c2a4'],     # Medium green
+            [0.8, '#2ca25f'],     # Dark green
+            [1.0, '#006d2c']      # Very dark green
         ],
-        aspect='equal'  # Make cells square
+        zmin=min_val,            # Set minimum of color scale
+        zmax=max_val,            # Set maximum of color scale
+        aspect='equal'           # Make cells square
     )
 
     # Add text annotations with improved formatting
@@ -101,7 +112,11 @@ def create_interactive_confusion_matrix(y_true, y_pred, model, normalized=False,
             title=dict(
                 text=f"<b>{color_label}</b>",
                 font=dict(size=14, family='Arial')
-            )
+            ),
+            len=0.75,          # Adjust colorbar length
+            thickness=20,      # Adjust colorbar thickness
+            tickformat='.2f' if normalized else 'd',
+            nticks=10         # Adjust number of ticks
         ),
         font=dict(size=14, family='Arial'),
         paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
